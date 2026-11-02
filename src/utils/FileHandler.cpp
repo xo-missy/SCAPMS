@@ -1,21 +1,27 @@
+
 #include "FileHandler.h"
 #include "Exceptions.h"
 #include <fstream>
-
+ 
 namespace scapms {
 namespace utils {
-
+ 
+// Every field is written as "..." with " doubled, \ written as \\ and line breaks written as \n / \r,
+// so the text never contains a raw comma-breaking quote or a real newline. parseLine() undoes exactly these
+// rules, so parseLine(escapeField(s)) == {s} for any string s.
 std::string FileHandler::escapeField(const std::string& field) {
     std::string out = "\"";
     for (char c : field) {
         if (c == '"') out += "\"\"";
-        else if (c == '\n' || c == '\r') out += ' ';
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
         else out += c;
     }
     out += '"';
     return out;
 }
-
+ 
 Row FileHandler::parseLine(const std::string& line) {
     Row fields;
     std::string cur;
@@ -26,6 +32,10 @@ Row FileHandler::parseLine(const std::string& line) {
             if (c == '"') {
                 if (i + 1 < line.size() && line[i + 1] == '"') { cur += '"'; ++i; }
                 else inQuotes = false;
+            } else if (c == '\\' && i + 1 < line.size() &&
+                       (line[i + 1] == 'n' || line[i + 1] == 'r' || line[i + 1] == '\\')) {
+                char n = line[++i];
+                cur += (n == 'n') ? '\n' : (n == 'r') ? '\r' : '\\';
             } else cur += c;
         } else if (c == '"') {
             inQuotes = true;
@@ -37,7 +47,7 @@ Row FileHandler::parseLine(const std::string& line) {
     fields.push_back(cur);
     return fields;
 }
-
+ 
 void FileHandler::writeCsv(const std::string& path, const std::vector<Row>& rows) {
     std::ofstream out(path.c_str());
     if (!out.is_open()) throw FileException("Cannot open file for writing: " + path);
@@ -51,7 +61,7 @@ void FileHandler::writeCsv(const std::string& path, const std::vector<Row>& rows
     out.flush();
     if (!out) throw FileException("Failed while writing file: " + path);
 }
-
+ 
 std::vector<Row> FileHandler::readCsv(const std::string& path) {
     std::ifstream in(path.c_str());
     if (!in.is_open()) throw FileException("Cannot open file for reading: " + path);
@@ -64,6 +74,6 @@ std::vector<Row> FileHandler::readCsv(const std::string& path) {
     }
     return rows;
 }
-
+ 
 } // namespace utils
 } // namespace scapms
