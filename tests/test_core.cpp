@@ -5,17 +5,22 @@
 #include "../src/controller/ClinicManager.h"
 #include "../src/utils/Exceptions.h"
 #include "../src/utils/DateUtils.h"
-
+#include "../src/utils/FileHandler.h"
+ 
 using namespace scapms;
 using namespace scapms::controller;
 using model::Category;
-
+ 
 static int failures = 0;
 #define CHECK(c) do { if (!(c)) { std::cout << "FAIL line " << __LINE__ << ": " #c "\n"; ++failures; } } while (0)
 #define THROWS(ex, stmt) do { bool ok = false; try { stmt; } catch (const ex&) { ok = true; } CHECK(ok); } while (0)
-
-static std::vector<int> ids(const PatientList& v) { std::vector<int> r; for (auto* p : v) r.push_back(p->id()); return r; }
-
+ 
+static std::vector<int> ids(const PatientList& v) {
+    std::vector<int> r;
+    for (auto* p : v) r.push_back(p->id());
+    return r;
+}
+ 
 int main() {
     ClinicManager m;
     m.addPatient(Category::General, 30, "Zainab Bello", 40, "0801", {"Headache"});
@@ -23,7 +28,7 @@ int main() {
     m.addPatient(Category::FollowUp, 20, "Chinedu Okoro", 60, "0803", {"2026-09-01", "Dr. Ade"});
     m.addPatient(Category::General, 0, "Bola Ige", 12, "0804", {});
     CHECK(m.patientCount() == 4);
-
+ 
     // validation + custom exceptions
     THROWS(utils::DuplicateIdException, m.addPatient(Category::General, 10, "X", 1, "1", {}));
     THROWS(utils::InvalidAgeException, m.addPatient(Category::General, 99, "X", 121, "1", {}));
@@ -31,9 +36,10 @@ int main() {
     THROWS(utils::InvalidPatientException, m.addPatient(Category::Emergency, 99, "X", 5, "1", {"9", "t"}));
     THROWS(utils::InvalidPatientException, m.addPatient(Category::General, 99, "  ", 5, "1", {}));
     CHECK(m.patientCount() == 4);
-
+ 
     // all sorts, all keys, agree with each other
-    SortAlgorithm algos[] = {SortAlgorithm::Selection, SortAlgorithm::Insertion, SortAlgorithm::Merge, SortAlgorithm::Quick};
+    SortAlgorithm algos[] = {SortAlgorithm::Selection, SortAlgorithm::Insertion,
+                             SortAlgorithm::Merge, SortAlgorithm::Quick};
     SortKey keys[] = {SortKey::Name, SortKey::Id, SortKey::Age, SortKey::AppointmentDate};
     for (SortKey k : keys) {
         m.sortPatients(SortAlgorithm::Merge, k);
@@ -46,19 +52,22 @@ int main() {
     }
     m.sortPatients(SortAlgorithm::Quick, SortKey::Name);
     CHECK(m.patients().front()->name() == "adam Yusuf");   // case-insensitive
-
+ 
     // bigger randomised sort check
     {
         ClinicManager big;
         unsigned s = 12345;
-        for (int i = 1; i <= 300; ++i) { s = s * 1103515245u + 12345u; big.addPatient(Category::General, i, "P" + std::to_string(s % 1000), int(s % 100), "c", {}); }
+        for (int i = 1; i <= 300; ++i) {
+            s = s * 1103515245u + 12345u;
+            big.addPatient(Category::General, i, "P" + std::to_string(s % 1000), int(s % 100), "c", {});
+        }
         for (SortAlgorithm a : algos) {
             big.sortPatients(a, SortKey::Age);
             auto v = big.patients();
             for (size_t i = 1; i < v.size(); ++i) CHECK(v[i-1]->age() <= v[i]->age());
         }
     }
-
+ 
     // searching
     SearchResult r = m.search(SearchField::Id, "20");
     CHECK(r.matches.size() == 1 && r.algorithm == "Linear Search");   // sorted by name, not id
@@ -75,7 +84,7 @@ int main() {
     CHECK(r.matches.size() == 1);
     THROWS(utils::ClinicException, m.search(SearchField::Category, "nonsense"));
     CHECK(m.recentPatients().size() >= 1);
-
+ 
     // appointments + polymorphic scheduling
     int a1 = m.scheduleAppointment(10, "2026-11-01", "09:00", "Cast check");
     int a2 = m.scheduleAppointment(20, "2026-11-01", "10:00", "Review");
@@ -91,10 +100,9 @@ int main() {
     m.cancelAppointment(a2);
     THROWS(utils::InvalidAppointmentException, m.cancelAppointment(a2));
     CHECK(m.reportDailySummary("2026-11-01").find("Total Appointments: 3") != std::string::npos);
-    CHECK(m.reportMostFrequentlyAttended().find("Adam") == std::string::npos || true);
     CHECK(m.reportMostFrequentlyAttended().find("adam Yusuf") != std::string::npos);
     CHECK(m.reportCategoryDistribution().find("Emergency Patients") != std::string::npos);
-
+ 
     // queue is FIFO and skips deleted patients
     m.enqueue(30); m.enqueue(10); m.enqueue(20);
     THROWS(utils::ClinicException, m.enqueue(30));
@@ -102,7 +110,7 @@ int main() {
     m.deletePatient(10);
     CHECK(m.callNext()->id() == 20);
     THROWS(utils::ClinicException, m.callNext());
-
+ 
     // undo stack: delete / modify / remove appointment
     CHECK(m.patientCount() == 3);
     std::string desc = m.undo();                 // undo delete 10
@@ -119,7 +127,7 @@ int main() {
     CHECK(m.patient(10)->appointments().size() == 2);
     while (m.canUndo()) m.undo();
     THROWS(utils::ClinicException, m.undo());
-
+ 
     // save / load round trip + failures
     m.enqueue(30);
     const char* path = "/tmp/scapms_test.csv";
@@ -131,18 +139,55 @@ int main() {
     CHECK(m2.queueSnapshot().size() == 1);
     CHECK(m2.patient(20)->details()[1] == "Dr. Ade");
     THROWS(utils::FileException, m2.load("/nonexistent/file.csv"));
-    { FILE* f = std::fopen("/tmp/scapms_bad.csv", "w"); std::fputs("PATIENT,General,1,Bob,200,x,y\n", f); std::fclose(f); }
+    {
+        FILE* f = std::fopen("/tmp/scapms_bad.csv", "w");
+        std::fputs("PATIENT,General,1,Bob,200,x,y\n", f);
+        std::fclose(f);
+    }
     THROWS(utils::FileException, m2.load("/tmp/scapms_bad.csv"));
     CHECK(m2.patientCount() == 4);               // failed load leaves state untouched
-
+ 
     // polymorphism
     for (auto* p : m.patients()) CHECK(!m.processPatient(*p).empty());
-
+ 
     // cache is a bounded array
     ClinicManager c;
-    for (int i = 1; i <= 15; ++i) { c.addPatient(Category::General, i, "N" + std::to_string(i), 20, "c", {}); c.recordAccess(i); }
+    for (int i = 1; i <= 15; ++i) {
+        c.addPatient(Category::General, i, "N" + std::to_string(i), 20, "c", {});
+        c.recordAccess(i);
+    }
     CHECK(c.recentPatients().size() == 10 && c.recentPatients()[0]->id() == 15);
-
+ 
+    // FileHandler: escapeField and parseLine must be exact inverses (commas, quotes, backslashes, line breaks)
+    {
+        std::vector<std::string> samples = {"plain", "with,comma", "say \"hi\"", "back\\slash", "two\nlines",
+                                            "", "a,b\",c\\", "trailing\\", "\"\"", ",,"};
+        for (const std::string& str : samples) {
+            utils::Row parsed = utils::FileHandler::parseLine(utils::FileHandler::escapeField(str));
+            CHECK(parsed.size() == 1 && parsed[0] == str);
+        }
+        utils::Row row = {"x", "Okafor, Grace", "\"q\"", "", ","};
+        std::string line;
+        for (size_t i = 0; i < row.size(); ++i) line += (i ? "," : "") + utils::FileHandler::escapeField(row[i]);
+        CHECK(utils::FileHandler::parseLine(line) == row);
+    }
+ 
+    // a patient whose name, contact and details contain commas and quotes survives save + load
+    {
+        ClinicManager a;
+        a.addPatient(Category::General, 501, "Okafor, Grace \"Gigi\"", 30, "08012345678, ext 2", {"Cough, dry"});
+        a.save("/tmp/scapms_comma.csv");
+        ClinicManager b;
+        b.load("/tmp/scapms_comma.csv");
+        CHECK(b.patientCount() == 1);
+        CHECK(b.patient(501) != nullptr);
+        if (b.patient(501)) {
+            CHECK(b.patient(501)->name() == "Okafor, Grace \"Gigi\"");
+            CHECK(b.patient(501)->contact() == "08012345678, ext 2");
+            CHECK(b.patient(501)->details()[0] == "Cough, dry");
+        }
+    }
+ 
     std::cout << (failures ? "TESTS FAILED\n" : "ALL TESTS PASSED\n");
     return failures ? 1 : 0;
 }
